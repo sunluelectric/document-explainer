@@ -1,0 +1,12 @@
+.env
+.history
+__pycache__/
+node_modules/
+*.log
+docs/
+history.json
+embeddings.npy
+parsed_chunks.json
+suggestions.json
+unknown_questions.json
+.vscode/
