@@ -1,0 +1,15 @@
+# Requirements for document-explainer project
+# Based on the imports in document_explainer.py
+
+# Core dependencies
+openai
+python-dotenv
+PyMuPDF  # for fitz
+beautifulsoup4
+tiktoken
+numpy
+
+# Additional system dependencies that might be needed
+# (these are typically already available in conda environments)
+# os - built-in
+# json - built-in
