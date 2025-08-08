@@ -55,6 +55,22 @@ request_more_info_json = {
     }
 }
 
+request_semantic_search_json = {
+    "name": "request_semantic_search",
+    "description": "Use this tool to request performing semantic search to the documents with a key sentence",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "semantic_search_key": {
+                "type": "string",
+                "description": "The key sentence for the semantic search"
+            }
+        },
+        "required": ["semantic_search_key"],
+        "additionalProperties": False
+    }
+}
+
 class DocumentExplainer:
     def __init__(self):
         self.load_env()
@@ -195,14 +211,25 @@ class DocumentExplainer:
                 return {"status": "error", "message": f"Cannot increase TOP_N beyond {self.TOP_N_MAX}."}
         return {"status": "success", "message": f"Top N increased to {self.TOP_N}."}
     
+    def request_semantic_search(self, semantic_search_key):
+        if not semantic_search_key:
+            return {"status": "error", "message": "Semantic search key is required."}
+        chunks, embeddings = self.load_chunks_embeddings()
+        if chunks is None or embeddings is None:
+            return {"status": "error", "message": "Failed to load document chunks or embeddings."}
+        context = self.semantic_search(semantic_search_key, embeddings, chunks, top_n=self.TOP_N)
+        context = "\n\n".join(context)
+        if not context:
+            return {"status": "error", "message": "No relevant chunks found for the semantic search key."}
+        else:
+            return {"status": "success", "message": "Semantic search completed successfully.", "data": context}
+
     def handle_tool_call(self, tool_calls):
         results = []
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
             arguments = json.loads(tool_call.function.arguments)
-            print(f"Tool called: {tool_name}", flush=True)
-            
-            # Use getattr to get the method from self instead of globals()
+            print(f"AI is calling tool: {tool_name}", flush=True)
             tool = getattr(self, tool_name, None)
             result = tool(**arguments) if tool else {"status": "error", "message": f"Tool {tool_name} not found"}
             results.append({"role": "tool", "content": json.dumps(result), "tool_call_id": tool_call.id})
@@ -212,18 +239,20 @@ class DocumentExplainer:
         return [
             {"type": "function", "function": record_unknown_question_json},
             {"type": "function", "function": record_suggestion_json},
+            {"type": "function", "function": request_semantic_search_json},
             {"type": "function", "function": request_more_info_json}
         ]
     
     def system_prompt(self):
         system_prompt = (
             f"You are a document explainer system. You are asked to explain variety of documents that is saved in the user's system.\n"
-            f"Semantic search has been implemented prior to this request. The most relevant chunks have been identified. These chunks will be given to you shortly. The total number of chunks will also be given. \n"
+            f"Semantic search has been implemented prior to this request. The most relevant chunks relevant to the user's latest question have been identified. These chunks will be given to you shortly. The total number of chunks will also be given. \n"
             f"Your task is to provide a concise and accurate explanation of the document based on the provided chunks and the user's questions. \n"
             f"Use the following tools when necessary:\n"
             f"- record_unknown_question: Use this tool to record any question that couldn't be answered from the chunks, even after you have requested the maximum number of chunks.\n"
             f"- record_suggestion: Use this tool to record a suggestion for enriching the system, such as adding more documents or improving the search functionality.\n"
-            f"- request_more_info: Use this tool to request larger number of chunks returned from the semantic search. Notice that there is a limit on the number of {self.TOP_N_MAX} chunks that can be returned. Do not use this function to request more chunks if that limit is hit.\n"
+            f"- request_semantic_search: Use this tool to request performing semantic search to the documents with a key sentence of your choice. Use this tool when you think you need to query something from the documents for further information.\n"
+            f"- request_more_info: Use this tool to request larger number of chunks returned from the semantic search. Notice that there is a limit on the number of {self.TOP_N_MAX} chunks that can be returned. Do not use this function to request more chunks if that limit is hit. Notice that in the beginning of each conversation, the chunk number is reset to {self.TOP_N_DEFAULT} upon the completion of a round of conversation.\n"
             f"Remember to always provide a clear and concise explanation, and use the tools only when necessary.\n"
             f"If you cannot find the answer in the chunks, let the user know honestly, especially if the user requires you to answer based on the chunks.\n"
             f"If you cannot find the answer in the chunks, and you think you can answer based on your own knowledge, let the user know that you are answering based on your own knowledge.\n\n"
@@ -278,3 +307,4 @@ class DocumentExplainer:
 if __name__ == "__main__":
     explainer = DocumentExplainer()
     explainer.main()
+    
