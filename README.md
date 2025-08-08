@@ -1,4 +1,6 @@
-# 📚 Document Explainer - Advanced AI-Po## 🚀 Quick Start
+# 📚 Document Explainer
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
