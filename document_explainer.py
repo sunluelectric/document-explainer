@@ -64,7 +64,7 @@ class DocumentExplainer:
     def load_env(self):
         load_dotenv(override=True)
         self.OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-        self.LLM_MODEL = "gpt-4.1-mini"
+        self.LLM_MODEL = "gpt-5-mini"
         self.LLM_EMBEDDING_MODEL = "text-embedding-3-small"
         self.DOC_DIR_PATH = "./docs"
         self.TOP_N_DEFAULT = 10
