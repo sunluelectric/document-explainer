@@ -1,11 +1,5 @@
 # 📚 Document Explainer
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Python 3.8+---
-
 ## 🔧 How the System Works
 
 ### Document Processing Pipeline
