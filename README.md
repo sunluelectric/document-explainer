@@ -1,6 +1,7 @@
 # 📚 Document Explainer (Online Cross-Check Edition)
 
 
+<<<<<<< HEAD
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -9,6 +10,8 @@
 - **OpenAI API key**
 
 
+=======
+>>>>>>> 1c5999293107caf460a2c9a7ae39de0cb55a235b
 ## 🔧 How the System Works
 
 ### Agentic Workflow & Online Cross-Checking
