@@ -1,45 +1,53 @@
-# 📚 Document Explainer
+# 📚 Document Explainer (Online Cross-Check Edition)
+
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- **Python 3.8+---
+- **Python 3.8+**
+- **OpenAI API key**
+
 
 ## 🔧 How the System Works
+
+### Agentic Workflow & Online Cross-Checking
+
+This edition features a dual-agent architecture:
+
+1. **Search Agent**: Answers questions using your documents and built-in tools.
+2. **Cross-Check Agent**: Verifies the answer, can perform a single web search, and appends a `[Cross-Check Agent Comment]` with corrections or confirmations.
 
 ### Document Processing Pipeline
 
 1. **Document Scanning**: Recursively scans the `docs/` folder for PDF and HTML files
 2. **Text Extraction**:
-   - **PDFs**: Uses PyMuPDF (fitz) to extract clean text from all pages
-   - **HTML**: Uses BeautifulSoup to parse and extract readable content
+     - **PDFs**: Uses PyMuPDF (fitz) to extract clean text from all pages
+     - **HTML**: Uses BeautifulSoup to parse and extract readable content
 3. **Intelligent Chunking**: Splits text into 2000-token chunks with 200-token overlap using OpenAI's tiktoken
 4. **Embedding Generation**: Creates vector embeddings using `text-embedding-3-small`
 5. **Persistence**: Saves chunks (`parsed_chunks.json`) and embeddings (`embeddings.npy`) for future use
 
 ### Query Processing & AI Interaction
 
-1. **Initial Semantic Search**: User query is embedded and compared against document embeddings using cosine similarity
+1. **Semantic Search**: User query is embedded and compared against document embeddings using cosine similarity
 2. **Context Assembly**: Top 10 most relevant chunks are selected and provided to the AI
-3. **AI Analysis**: GPT-4o-mini analyzes the context and generates responses
+3. **AI Analysis**: GPT-5-mini (or configured model) analyzes the context and generates responses
 4. **Tool-Enhanced Iteration**: AI can autonomously use tools to:
-   - Perform additional semantic searches with different keywords
-   - Request more document chunks (up to 50)
-   - Record unanswered questions or suggestions
-5. **Response Generation**: Final answer is provided with clear source attribution
+     - Perform up to 5 semantic searches per query
+     - Request more document chunks (in steps of 5, up to 25)
+     - Record unanswered questions or suggestions
+5. **Online Cross-Check**: Every answer is reviewed by a cross-check agent, which may perform a web search and append corrections or confirmations
+6. **Response Generation**: Final answer is provided, with `[Cross-Check Agent Comment]` if applicable
 
 ### Memory & Session Management
 
 - **Conversation Persistence**: All interactions saved to `history.json`
 - **State Management**: Chunk limits reset after each query to optimize performance
-- **Caching**: Document embeddings persist across sessions to reduce API costsn 3.12.8 recommended)
-- **Conda** (recommended for environment management)
-- **OpenAI API key** with access to GPT modelsDocument Q&A System
-
-A sophisticated document analysis system powered by OpenAI's latest GPT models with advanced agentic AI capabilities. Features intelligent semantic search, iterative query refinement, conversation memory, and a comprehensive suite of AI tools for enhanced document exploration.
+- **Caching**: Document embeddings persist across sessions to reduce API costs
 
 ---
+
 
 ## ✨ Key Features
 
@@ -50,27 +58,38 @@ A sophisticated document analysis system powered by OpenAI's latest GPT models w
 - **Semantic Search**: Uses OpenAI's `text-embedding-3-small` model for high-quality vector embeddings
 - **Persistent Caching**: Saves document chunks and embeddings locally (`parsed_chunks.json` and `embeddings.npy`) to minimize API costs
 
-### 🤖 **Agentic AI Integration**
+### 🤖 **Agentic AI Integration & Online Verification**
 
-- **Chain Semantic Search**: AI can perform iterative searches on documents with custom queries for deeper exploration
-- **Dynamic Tool Usage**: Four specialized tools that the AI can use autonomously during conversations
+- **Dual-Agent System**: Search agent answers, cross-check agent verifies and appends corrections or confirmations
+- **Online Fact-Checking**: Cross-check agent can perform a single web search per answer
+- **Tool Suite**:
+     - `semantic_search`: Finds relevant document chunks using embeddings
+     - `request_increasing_top_n`: Dynamically increases the number of chunks returned
+     - `record_unknown_question`: Logs questions that cannot be answered from the documents
+     - `record_suggestion`: Captures user/system improvement suggestions
+- **Limits & Controls**:
+     - Up to 5 semantic searches per query
+     - Chunk return can be increased in steps of 5, up to 25
 - **Conversation Memory**: Complete chat history persistence across sessions
 - **Context-Aware Responses**: Transparent about whether answers come from documents or general knowledge
+
 
 ### 🛠️ **Intelligent Tool Suite**
 
 The AI assistant has access to four powerful tools:
 
-1. **`request_semantic_search`**: Performs additional semantic searches with custom keywords for deeper document exploration
-2. **`request_more_info`**: Dynamically increases the number of relevant chunks (from 10 to max 50) when more context is needed
+1. **`semantic_search`**: Performs semantic searches with custom keywords for deeper document exploration
+2. **`request_increasing_top_n`**: Dynamically increases the number of relevant chunks (from 10 to max 25) when more context is needed
 3. **`record_unknown_question`**: Logs questions that couldn't be answered for system improvement
 4. **`record_suggestion`**: Captures user feedback and improvement suggestions
 
-### 🧠 **Smart Search Strategy**
+
+### 🧠 **Smart Search & Verification Strategy**
 
 - **Initial Search**: Every user query triggers semantic search for the top 10 most relevant chunks
-- **Iterative Refinement**: AI can perform additional searches with different keywords for comprehensive coverage
-- **Context Expansion**: Automatically requests more chunks when initial results are insufficient
+- **Iterative Refinement**: AI can perform up to 5 semantic searches with different keywords for comprehensive coverage
+- **Context Expansion**: Automatically requests more chunks when initial results are insufficient (up to 25)
+- **Online Cross-Check**: Every answer is reviewed and optionally verified online by the cross-check agent
 - **Reset Mechanism**: Chunk limit resets to default (10) after each conversation round for optimal performance
 
 ---
@@ -118,10 +137,11 @@ docs/
 └── ... (any PDF or HTML files)
 ```
 
+
 ### 4. Run the System
 
 ```bash
-python document_explainer.py
+python document_explainer_online_check.py
 ```
 
 **Note**: On first run, the system will process all documents and generate embeddings, which may take a few minutes depending on document size and quantity.
@@ -165,31 +185,35 @@ self.OVERLAP = 200                      # Chunk overlap
 
 ---
 
+
 ## 📝 Usage Examples & AI Capabilities
 
-### Basic Document Q&A
+### Basic Document Q&A with Online Cross-Check
 
 ```
 You: What are the main methodologies discussed in the power systems papers?
 Bot: Based on my analysis of the documents, the main methodologies focus on robust state estimation techniques including maximum likelihood estimation, t-distribution noise models, and LAV (Least Absolute Value) approaches for power system state estimation...
+[Cross-Check Agent Comment] This information appears correct based on my own knowledge.
 ```
 
 ### Chain Semantic Search in Action
 
 ```
 You: Tell me about PMU placement optimization
-Bot: [Uses request_semantic_search tool with "PMU placement optimization"]
+Bot: [Uses semantic_search tool with "PMU placement optimization"]
      Based on the search results, I found several approaches to PMU placement optimization...
-     [May use request_semantic_search again with "optimal PMU placement algorithms"]
+     [May use semantic_search again with "optimal PMU placement algorithms"]
      Let me search for more specific algorithmic details...
+[Cross-Check Agent Comment] Confirmed with online sources.
 ```
 
 ### Dynamic Context Expansion
 
 ```
 You: I need comprehensive details about the mathematical formulations
-Bot: [Uses request_more_info tool to increase chunks from 10 to 15, then 20...]
+Bot: [Uses request_increasing_top_n tool to increase chunks from 10 to 15, then 20...]
      With additional context, I can provide more detailed mathematical formulations...
+[Cross-Check Agent Comment] No issues found.
 ```
 
 ### Intelligent Question Handling
@@ -199,6 +223,7 @@ You: What about quantum computing applications?
 Bot: I couldn't find information about quantum computing applications in the provided documents.
      [Uses record_unknown_question tool]
      This question has been recorded for potential system enhancement.
+[Cross-Check Agent Comment] Confirmed: no relevant information found in documents or online.
 ```
 
 ### Multi-Tool Orchestration
@@ -209,32 +234,40 @@ The AI can seamlessly combine multiple tools in a single response:
 2. Request additional chunks for more context
 3. Perform secondary semantic search with refined keywords
 4. Record suggestions for system improvement
+5. Online cross-check and append corrections or confirmations
 
 ---
 
 ## �️ File Structure
 
+
 After running the system, your project will look like this:
 
 ```
 document-explainer/
-├── .env                      # OpenAI API key configuration (create this)
-├── .gitignore               # Git exclusions
-├── environment.yml          # Conda environment specification
-├── document_explainer.py    # Main application with agentic AI
-├── README.md               # Documentation (this file)
-├── LICENSE                 # MIT License
-├── docs/                   # Document repository
+├── .env                              # OpenAI API key configuration (create this)
+├── .gitignore                        # Git exclusions
+├── environment.yml                   # Conda environment specification
+├── document_explainer_online_check.py # NEW: Main application with agentic AI and online cross-checking
+├── document_explainer.py             # LEGACY: Previous version (no online cross-check)
+├── README.md                         # Documentation (this file)
+├── LICENSE                           # MIT License
+├── docs/                             # Document repository
 │   ├── research-paper1.pdf
 │   ├── technical-doc.html
 │   └── ... (your documents)
 └── Generated Files (auto-created):
-    ├── history.json            # Persistent conversation history
-    ├── parsed_chunks.json      # Processed document chunks
-    ├── embeddings.npy         # Vector embeddings cache
-    ├── suggestions.json       # User improvement suggestions  
-    └── unknown_questions.json # Questions requiring attention
+     ├── history.json                  # Persistent conversation history
+     ├── parsed_chunks.json            # Processed document chunks
+     ├── embeddings.npy                # Vector embeddings cache
+     ├── suggestions.json              # User improvement suggestions
+     └── unknown_questions.json        # Questions requiring attention
 ```
+
+**Note:**
+- Use `document_explainer_online_check.py` for the latest features and online cross-checking.
+- `document_explainer.py` is retained for legacy purposes and does not include the cross-check agent.
+
 
 ### Key Files Explained
 
@@ -261,10 +294,11 @@ document-explainer/
 - Ensure the folder exists and contains supported file types (.pdf, .html, .htm)
 - Check file permissions and ensure files aren't corrupted
 
+
 **"Model not found" or API errors**
 
-- The system uses `gpt-4o-mini` by default - ensure your API key has access
-- If needed, change `self.LLM_MODEL` to `gpt-4o-mini` or `gpt-4-turbo`
+- The system uses `gpt-5-mini` by default (or as configured) - ensure your API key has access
+- If needed, change `LLM_MODEL` in the source to a supported model
 - Verify your OpenAI account has sufficient credits
 
 **High API costs**
@@ -279,16 +313,18 @@ document-explainer/
 - Activate with `conda activate document-explainer`
 - If using different Python versions, update `environment.yml` accordingly
 
+
 **Tool calling errors**
 
 - Ensure you're using a compatible OpenAI model that supports function calling
-- GPT-4o-mini and GPT-4o are recommended for best tool usage
+- GPT-5-mini, GPT-4o-mini, and GPT-4o are recommended for best tool usage
 
 ---
 
 ## 🤝 Contributing
 
-This project demonstrates advanced concepts in RAG (Retrieval-Augmented Generation) and agentic AI systems. Feel free to contribute:
+
+This project demonstrates advanced concepts in RAG (Retrieval-Augmented Generation), agentic AI systems, and online cross-checking. Feel free to contribute:
 
 - **Document Format Support**: Add support for DOCX, TXT, Markdown, or other formats
 - **Advanced Chunking**: Implement semantic-aware chunking strategies
