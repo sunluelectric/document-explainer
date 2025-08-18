@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import tiktoken
 from agents import Agent, RunContextWrapper, function_tool, Runner, output_guardrail, trace, WebSearchTool, ModelSettings, GuardrailFunctionOutput
 import asyncio
+from pydantic import BaseModel
 
 explainer = None
 
@@ -19,6 +20,10 @@ TOP_N_MAX = 25
 SEMANTIC_SEARCH_MAX = 5
 EMBEDDING_MAX_TOKENS = 2000
 EMBEDDING_OVERLAP = 200
+
+class SearchAgentOutput(BaseModel):
+    is_require_cross_check: bool
+    search_result: str
 
 class DocumentExplainerOnlineCheck:
     def __init__(self):
@@ -179,23 +184,44 @@ class DocumentExplainerOnlineCheck:
         system_prompt = (
             f"You are a helpful document explainer assistant.\n"
             f"Your task is to answer the user's questions based on the information recorded in the documents.\n"
-            f"You can use tools to access the documents. You are allowed to perform semantic searches on the documents, and you may perform multiple searches with different query contents. You are also allowed to increase the number of returned chunks when necessary.\n"
+            f"You can use tools to access the documents. You are allowed to perform semantic searches on the documents, "
+            f"and you may perform multiple searches with different query contents. You are also allowed to increase "
+            f"the number of returned chunks when necessary.\n"
             f"Always provide concise and accurate responses to the user's questions based on the documents.\n\n"
             f"Use the following tools when appropriate:\n"
-            f"- record_unknown_question: Use this tool to record any question that cannot be answered from the chunks, even after you have performed several searches.\n"
-            f"- record_suggestion: Use this tool to record suggestions for enriching the system, such as adding more documents or improving the search functionality.\n"
-            f"- semantic_search: Use this tool to query the documents for further information. You can generate your own queries when needed. You may perform at most {SEMANTIC_SEARCH_MAX} searches per user request.\n"
-            f"- request_increasing_top_n: Use this tool to request a larger number of chunks returned from semantic search. You may request this multiple times, with each increase adding 5 chunks, capped at {TOP_N_MAX}.\n\n"
+            f"- record_unknown_question: Use this tool to record any question that cannot be answered from the chunks, "
+            f"even after you have performed several searches.\n"
+            f"- record_suggestion: Use this tool to record suggestions for enriching the system, such as adding more "
+            f"documents or improving the search functionality.\n"
+            f"- semantic_search: Use this tool to query the documents for further information. You can generate your own "
+            f"queries when needed. You may perform at most {SEMANTIC_SEARCH_MAX} searches per user request.\n"
+            f"- request_increasing_top_n: Use this tool to request a larger number of chunks returned from semantic search. "
+            f"You may request this multiple times, with each increase adding 5 chunks, capped at {TOP_N_MAX}.\n\n"
             f"Guidelines:\n"
             f"- Always provide a clear and concise answer.\n"
             f"- Use tools only when necessary.\n"
             f"- If the user's question is unclear or ambiguous, ask for clarification.\n"
-            f"- Always try to answer based on the information in the documents. For this reason, you are encouraged to perform at least one semantic search per user query.\n"
-            f"- If you cannot find the answer in the returned chunks, you are encouraged to use semantic_search or request_increasing_top_n before concluding, until the limits are reached or you believe no further relevant information can be found.\n"
-            f"- Do not add your own knowledge unless explicitly asked to, or if you believe the documents are lacking and your knowledge can meaningfully improve the answer. When you do so, make it clear to the user.\n"
-            f"- You may chat with the user without accessing the documents only if the user's message is not a question (e.g., a suggestion for the system, or a request to summarize the conversation history).\n\n"
-            f"You are also given a handoff that checks your response.\n"
-            f"Always use the handoff to check the response. \n\n"
+            f"- Always try to answer based on the information in the documents. For this reason, you are encouraged to "
+            f"perform at least one semantic search per user query.\n"
+            f"- If you cannot find the answer in the returned chunks, you are encouraged to use semantic_search or "
+            f"request_increasing_top_n before concluding, until the limits are reached or you believe no further relevant "
+            f"information can be found.\n"
+            f"- Do not add your own knowledge unless explicitly asked to, or if you believe the documents are lacking and "
+            f"your knowledge can meaningfully improve the answer. When you do so, make it clear to the user.\n"
+            f"- You may chat with the user without accessing the documents only if the user's message is not a question "
+            f"(e.g., a suggestion for the system, or a request to summarize the conversation history).\n\n"
+            f"Output Format:\n"
+            f"- Always return a JSON object that matches this schema:\n"
+            f"  {{\n"
+            f'    "is_require_cross_check": true or false,\n'
+            f'    "search_result": "<your answer text here>"\n'
+            f"  }}\n\n"
+            f"- If the user’s question involves factual claims (retrieval, summarization, knowledge-based), "
+            f"set is_require_cross_check = true.\n"
+            f"- If the user’s question is meta (e.g., summarizing conversation history, casual chat), "
+            f"set is_require_cross_check = false.\n"
+            f"- Put your full, clear, concise answer into search_result.\n"
+            f"- Do not output anything except the JSON object.\n"
         )
         self.search_agent = Agent(
             name="Search agent",
@@ -207,26 +233,28 @@ class DocumentExplainerOnlineCheck:
                 self.semantic_search,
                 self.request_increasing_top_n
             ],
-            handoffs=[self.cross_check_agent]
+            output_type=SearchAgentOutput,
         )
 
     def define_cross_check_agent(self):
         system_prompt = (
-            f"You are a helpful information cross-checking assistant.\n"
-            f"Your upstream is an information retrieval and document explainer system that answers user queries using user documents and its built-in knowledge.\n"
-            f"Your task is to cross-check whether the assistant's response contains any facts that are obviously incorrect or misleading.\n"
-            f"You are allowed to use a tool to perform a web search. You can use this tool only once. Decide what is most likely to be wrong and formulate your own search query accordingly.\n\n"
-            f"Do not alter the content from your upstream. Instead, append your comments at the end of the response, starting with [Cross-Check Agent Comment], so the user knows clearly that this part comes from your online verification, not from the documents.\n"
-            f"If everything looks correct, or indeed is correct, just say so in your comments.\n"
-            f"Since you can only perform one online check, if you suspect something is wrong but cannot find evidence or did not have the chance to verify it online, point that out as well.\n\n"
+            f"You are a fact-checking assistant.\n"
+            f"You will receive the final text output of an upstream assistant whose job is to "
+            f"retrieve information from documents and summarize it for the user.\n\n"
+            f"Your task:\n"
+            f"- Review the answer for factual errors, misleading claims, outdated information, or statements "
+            f"that conflict with your own knowledge.\n"
+            f"- If you suspect a claim is wrong or outdated, you may perform at most one web search to verify.\n"
+            f"- Output your findings as bullet points. For each issue, write:\n"
+            f"  INCORRECT: <copied statement>\n"
+            f"  CORRECTED: <the corrected or updated information>\n"
+            f"- If you have a suspicion but cannot verify it with a single search, note it as:\n"
+            f"  UNVERIFIED SUSPICION: <statement> — <why it might be wrong>\n"
+            f"- If everything appears correct, output a single line: 'No factual errors found.'\n\n"
             f"Guidelines:\n"
-            f"- Do not modify the content from your upstream. Copy-and-paste whatever your upstream gives you in your output. Only append your comments, and always prefix them with [Cross-Check Agent Comment].\n"
-            f"- No need to explain the context. Directly starts with bullet points to state what is wrong and what should be the corrected answer. Simply use INCORRECT: and CORRECTED: to start the bullet points."
-            f"- If everything looks correct according to your own knowledge, do not perform the web search. Just state that it looks correct.\n"
-            f"- If something is incorrect or suspicious, perform the web search. You must come up with your own query to check the relevant information.\n"
-            f"- You may perform only one web search.\n"
-            f"- In [Cross-Check Agent Comment], specify what was wrong and what the correct information is according to the web search.\n"
-            f"- If you suspect something is incorrect but cannot verify it from the search results, include your suspicions in [Cross-Check Agent Comment] and make it clear that they are based on your own knowledge, not on online evidence."
+            f"- Do not repeat or restate the full upstream answer.\n"
+            f"- Keep your output limited to bullet points or the 'No factual errors found.' line.\n"
+            f"- Be concise and clear in your corrections.\n"
         )
         self.cross_check_agent = Agent(
             name="Cross-check agent",
@@ -243,6 +271,11 @@ class DocumentExplainerOnlineCheck:
         response = await Runner.run(self.search_agent, messages)
         return response.final_output
     
+    async def cross_check(self, query):
+        messages = [{"role": "user", "content": query}]
+        response = await Runner.run(self.cross_check_agent, messages)
+        return response.final_output
+
     def save_history(self, history):
         with open('history.json', 'w', encoding='utf-8') as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
@@ -262,12 +295,24 @@ class DocumentExplainerOnlineCheck:
             response = asyncio.run(self.chat(query, history))
             self.top_n = TOP_N_DEFAULT
             self.semantic_search_num = 0
-            print(f"Bot: {response}")
+            if response.is_require_cross_check:
+                print("SYSTEM: Cross-checking information...")
+                cross_check_response = asyncio.run(self.cross_check(response.search_result))
+                final_response = (
+                    f"Part 1 — Information Retrieval & Summary Agent's Answer:\n"
+                    f"{response.search_result}\n\n"
+                    f"Part 2 — Online Cross-Check Result:\n"
+                    f"{cross_check_response}"
+                )
+            else:
+                final_response = response.search_result
+            print(f"Bot: \n {final_response}")
             print("---")
             history.append({"role": "user", "content": query})
-            history.append({"role": "assistant", "content": response})
+            history.append({"role": "assistant", "content": final_response})
             self.save_history(history)
 
 if __name__ == "__main__":
-    explainer = DocumentExplainerOnlineCheck()
-    explainer.main()
+    with trace("Document Explainer"):
+        explainer = DocumentExplainerOnlineCheck()
+        explainer.main()
