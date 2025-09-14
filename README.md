@@ -1,13 +1,12 @@
 # 📚 Document Explainer (Online Cross-Check Edition)
 
-
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - **Python 3.8+**
 - **OpenAI API key**
-
+- **Serper API key**
 
 ## 🔧 How the System Works
 
@@ -16,14 +15,14 @@
 This edition features a dual-agent architecture:
 
 1. **Search Agent**: Answers questions using your documents and built-in tools.
-2. **Cross-Check Agent**: Verifies the answer, can perform a single web search, and appends a `[Cross-Check Agent Comment]` with corrections or confirmations.
+2. **Cross-Check Agent**: Verifies the answer, can perform a single web search using the Serper API, and appends corrections or confirmations.
 
 ### Document Processing Pipeline
 
 1. **Document Scanning**: Recursively scans the `docs/` folder for PDF and HTML files
 2. **Text Extraction**:
-     - **PDFs**: Uses PyMuPDF (fitz) to extract clean text from all pages
-     - **HTML**: Uses BeautifulSoup to parse and extract readable content
+   - **PDFs**: Uses PyMuPDF (fitz) to extract clean text from all pages
+   - **HTML**: Uses BeautifulSoup to parse and extract readable content
 3. **Intelligent Chunking**: Splits text into 2000-token chunks with 200-token overlap using OpenAI's tiktoken
 4. **Embedding Generation**: Creates vector embeddings using `text-embedding-3-small`
 5. **Persistence**: Saves chunks (`parsed_chunks.json`) and embeddings (`embeddings.npy`) for future use
@@ -34,10 +33,10 @@ This edition features a dual-agent architecture:
 2. **Context Assembly**: Top 10 most relevant chunks are selected and provided to the AI
 3. **AI Analysis**: GPT-5-mini (or configured model) analyzes the context and generates responses
 4. **Tool-Enhanced Iteration**: AI can autonomously use tools to:
-     - Perform up to 5 semantic searches per query
-     - Request more document chunks (in steps of 5, up to 25)
-     - Record unanswered questions or suggestions
-5. **Online Cross-Check**: Every answer is reviewed by a cross-check agent, which may perform a web search and append corrections or confirmations
+   - Perform up to 5 semantic searches per query
+   - Request more document chunks (in steps of 5, up to 25)
+   - Record unanswered questions or suggestions
+5. **Online Cross-Check**: Every answer is reviewed by a cross-check agent, which may perform a web search using Serper API and append corrections or confirmations
 6. **Response Generation**: Final answer is provided, with `[Cross-Check Agent Comment]` if applicable
 
 ### Memory & Session Management
@@ -47,7 +46,6 @@ This edition features a dual-agent architecture:
 - **Caching**: Document embeddings persist across sessions to reduce API costs
 
 ---
-
 
 ## ✨ Key Features
 
@@ -61,28 +59,28 @@ This edition features a dual-agent architecture:
 ### 🤖 **Agentic AI Integration & Online Verification**
 
 - **Dual-Agent System**: Search agent answers, cross-check agent verifies and appends corrections or confirmations
-- **Online Fact-Checking**: Cross-check agent can perform a single web search per answer
+- **Online Fact-Checking**: Cross-check agent performs a single web search per answer using the Serper API
 - **Tool Suite**:
-     - `semantic_search`: Finds relevant document chunks using embeddings
-     - `request_increasing_top_n`: Dynamically increases the number of chunks returned
-     - `record_unknown_question`: Logs questions that cannot be answered from the documents
-     - `record_suggestion`: Captures user/system improvement suggestions
+  - `semantic_search`: Finds relevant document chunks using embeddings
+  - `request_increasing_top_n`: Dynamically increases the number of chunks returned
+  - `record_unknown_question`: Logs questions that cannot be answered from the documents
+  - `record_suggestion`: Captures user/system improvement suggestions
+  - `serper_search`: Performs web search for cross-checking (replaces OpenAI web search)
 - **Limits & Controls**:
-     - Up to 5 semantic searches per query
-     - Chunk return can be increased in steps of 5, up to 25
+  - Up to 5 semantic searches per query
+  - Chunk return can be increased in steps of 5, up to 25
 - **Conversation Memory**: Complete chat history persistence across sessions
 - **Context-Aware Responses**: Transparent about whether answers come from documents or general knowledge
 
-
 ### 🛠️ **Intelligent Tool Suite**
 
-The AI assistant has access to four powerful tools:
+The AI assistant has access to these powerful tools:
 
 1. **`semantic_search`**: Performs semantic searches with custom keywords for deeper document exploration
 2. **`request_increasing_top_n`**: Dynamically increases the number of relevant chunks (from 10 to max 25) when more context is needed
 3. **`record_unknown_question`**: Logs questions that couldn't be answered for system improvement
 4. **`record_suggestion`**: Captures user feedback and improvement suggestions
-
+5. **`serper_search`**: Performs web search for online cross-checking
 
 ### 🧠 **Smart Search & Verification Strategy**
 
@@ -137,7 +135,6 @@ docs/
 └── ... (any PDF or HTML files)
 ```
 
-
 ### 4. Run the System
 
 ```bash
@@ -184,7 +181,6 @@ self.OVERLAP = 200                      # Chunk overlap
 ```
 
 ---
-
 
 ## 📝 Usage Examples & AI Capabilities
 
@@ -238,18 +234,16 @@ The AI can seamlessly combine multiple tools in a single response:
 
 ---
 
-## �️ File Structure
-
+### 🗂️ File Structure
 
 After running the system, your project will look like this:
 
 ```
 document-explainer/
-├── .env                              # OpenAI API key configuration (create this)
+├── .env                              # API key configuration (OpenAI, Serper)
 ├── .gitignore                        # Git exclusions
 ├── environment.yml                   # Conda environment specification
-├── document_explainer_online_check.py # NEW: Main application with agentic AI and online cross-checking
-├── document_explainer.py             # LEGACY: Previous version (no online cross-check)
+├── document_explainer.py             # Main application with agentic AI and online cross-checking
 ├── README.md                         # Documentation (this file)
 ├── LICENSE                           # MIT License
 ├── docs/                             # Document repository
@@ -265,9 +259,8 @@ document-explainer/
 ```
 
 **Note:**
-- Use `document_explainer_online_check.py` for the latest features and online cross-checking.
-- `document_explainer.py` is retained for legacy purposes and does not include the cross-check agent.
 
+- Use `document_explainer.py` for all features and online cross-checking.
 
 ### Key Files Explained
 
@@ -282,10 +275,10 @@ document-explainer/
 
 ## 🔧 Troubleshooting
 
-**"No OpenAI API key found"**
+**"No OpenAI or Serper API key found"**
 
 - Ensure your `.env` file exists in the project root
-- Verify it contains `OPENAI_API_KEY=your-actual-api-key`
+- Verify it contains both `OPENAI_API_KEY=your-actual-api-key` and `SERPER_API_KEY=your-serper-key`
 - Check that your API key has access to GPT-4o models
 
 **"No documents found"**
@@ -293,7 +286,6 @@ document-explainer/
 - Place PDF or HTML files in the `docs/` folder
 - Ensure the folder exists and contains supported file types (.pdf, .html, .htm)
 - Check file permissions and ensure files aren't corrupted
-
 
 **"Model not found" or API errors**
 
@@ -313,16 +305,15 @@ document-explainer/
 - Activate with `conda activate document-explainer`
 - If using different Python versions, update `environment.yml` accordingly
 
-
 **Tool calling errors**
 
 - Ensure you're using a compatible OpenAI model that supports function calling
 - GPT-5-mini, GPT-4o-mini, and GPT-4o are recommended for best tool usage
+- For online cross-checking, ensure your Serper API key is valid and has sufficient quota
 
 ---
 
 ## 🤝 Contributing
-
 
 This project demonstrates advanced concepts in RAG (Retrieval-Augmented Generation), agentic AI systems, and online cross-checking. Feel free to contribute:
 
