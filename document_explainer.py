@@ -1,99 +1,54 @@
 import os
 import json
+import requests
 import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
 import fitz
 from bs4 import BeautifulSoup
 import tiktoken
+from agents import Agent, function_tool, Runner, trace, ModelSettings
+import asyncio
+from pydantic import BaseModel
 
-record_unknown_question_json = {
-    "name": "record_unknown_question",
-    "description": "Always use this tool to record any question that couldn't be answered as you didn't know the answer",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "question": {
-                "type": "string",
-                "description": "The question that couldn't be answered"
-            },
-        },
-        "required": ["question"],
-        "additionalProperties": False
-    }
-}
+explainer = None
 
-record_suggestion_json = {
-    "name": "record_suggestion",
-    "description": "Use this tool to record a suggestion for enriching the system, such as adding more documents or improving the search functionality",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "suggestion": {
-                "type": "string",
-                "description": "The suggestion for enriching the system"
-            },
-        },
-        "required": ["suggestion"],
-        "additionalProperties": False
-    }
-}
+load_dotenv(override=True)
 
-request_more_info_json = {
-    "name": "request_more_info",
-    "description": "Use this tool to request larger number of results from the semantic search",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "is_more_results_required": {
-                "type": "boolean",
-                "description": "Whether to return more results"
-            }
-        },
-        "required": ["is_more_results_required"],
-        "additionalProperties": False
-    }
-}
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 
-request_semantic_search_json = {
-    "name": "request_semantic_search",
-    "description": "Use this tool to request performing semantic search to the documents with a key sentence",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "semantic_search_key": {
-                "type": "string",
-                "description": "The key sentence for the semantic search"
-            }
-        },
-        "required": ["semantic_search_key"],
-        "additionalProperties": False
-    }
-}
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-5-mini")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+DOC_PATH = os.getenv("DOC_PATH", "./docs")
+TOP_N_DEFAULT = int(os.getenv("TOP_N_DEFAULT", 10))
+TOP_N_MAX = int(os.getenv("TOP_N_MAX", 25))
+SEMANTIC_SEARCH_MAX = int(os.getenv("SEMANTIC_SEARCH_MAX", 5))
+SERPER_QUERY_MAX = int(os.getenv("SERPER_QUERY_MAX", 5))
+EMBEDDING_MAX_TOKENS = int(os.getenv("EMBEDDING_MAX_TOKENS", 2000))
+EMBEDDING_OVERLAP = int(os.getenv("EMBEDDING_OVERLAP", 200))
 
-class DocumentExplainer:
+class SearchAgentOutput(BaseModel):
+    is_require_cross_check: bool
+    search_result: str
+
+class DocumentExplainerOnlineCheck:
     def __init__(self):
-        self.load_env()
+        self.top_n = TOP_N_DEFAULT
+        self.semantic_search_num = 0
+        self.serper_query_num = 0
+        load_dotenv(override=True)
         self.create_client()
         self.set_tokenizer()
-    
-    def load_env(self):
-        load_dotenv(override=True)
-        self.OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-        self.LLM_MODEL = "gpt-5-mini"
-        self.LLM_EMBEDDING_MODEL = "text-embedding-3-small"
-        self.DOC_DIR_PATH = "./docs"
-        self.TOP_N_DEFAULT = 10
-        self.TOP_N = self.TOP_N_DEFAULT
-        self.TOP_N_MAX = 50
-        self.MAX_TOKENS = 2000
-        self.OVERLAP = 200
-
+        self.retrieve_chunks()
+        self.define_cross_check_agent()
+        self.define_search_agent()
+        
     def create_client(self):
-        self.client = OpenAI(api_key=self.OPENAI_API_KEY)
+        self.client = OpenAI(api_key=OPENAI_API_KEY)
 
     def set_tokenizer(self):
-        self.tokenizer = tiktoken.encoding_for_model(self.LLM_EMBEDDING_MODEL)
+        self.tokenizer = tiktoken.encoding_for_model(EMBEDDING_MODEL)
 
     def tokenize(self, text):
         return self.tokenizer.encode(text)
@@ -108,17 +63,16 @@ class DocumentExplainer:
         tokens_so_far = 0
         for word in words:
             token_count = self.count_tokens(word)
-            if tokens_so_far + token_count > self.MAX_TOKENS:
+            if tokens_so_far + token_count > EMBEDDING_MAX_TOKENS:
                 chunks.append(" ".join(chunk))
-                if self.OVERLAP > 0:
-                    chunk = chunk[-self.OVERLAP:]
+                if EMBEDDING_OVERLAP > 0:
+                    chunk = chunk[-EMBEDDING_OVERLAP:]
                     tokens_so_far = self.count_tokens(" ".join(chunk))
                 else:
                     chunk = []
                     tokens_so_far = 0
             chunk.append(word)
             tokens_so_far += token_count
-
         if chunk:
             chunks.append(" ".join(chunk))
 
@@ -126,9 +80,9 @@ class DocumentExplainer:
     
     def chunk_documents(self):
         chunks = []
-        for filename in os.listdir(self.DOC_DIR_PATH):
+        for filename in os.listdir(DOC_PATH):
             if filename.endswith('.pdf'):
-                doc_path = os.path.join(self.DOC_DIR_PATH, filename)
+                doc_path = os.path.join(DOC_PATH, filename)
                 doc = fitz.open(doc_path)
                 text = ""
                 for page in doc:
@@ -136,7 +90,7 @@ class DocumentExplainer:
                 doc.close()
                 chunks.extend(self.chunk_text(text))
             elif filename.endswith('.html') or filename.endswith('.htm'):
-                with open(os.path.join(self.DOC_DIR_PATH, filename), 'r', encoding='utf-8') as f:
+                with open(os.path.join(DOC_PATH, filename), 'r', encoding='utf-8') as f:
                     soup = BeautifulSoup(f.read(), 'html.parser')
                     text = soup.get_text()
                     chunks.extend(self.chunk_text(text))
@@ -146,7 +100,7 @@ class DocumentExplainer:
         embeddings = []
         for chunk in chunks:
             response = self.client.embeddings.create(
-                model=self.LLM_EMBEDDING_MODEL,
+                model=EMBEDDING_MODEL,
                 input=chunk,
                 encoding_format="float"
             )
@@ -166,20 +120,190 @@ class DocumentExplainer:
             embeddings = np.load('embeddings.npy')
             return chunks, embeddings
         return None, None
+    
+    def retrieve_chunks(self):
+        self.chunks, self.embeddings = self.load_chunks_embeddings()
+        if self.chunks is None or self.embeddings is None:
+            self.chunks = self.chunk_documents()
+            self.embeddings = self.generate_embeddings(self.chunks)
+            self.save_chunks_embeddings(self.chunks, self.embeddings)
+        print(f"SYSTEM: Retrieved {len(self.chunks)} chunks and {len(self.embeddings)} embeddings from the documents.")
 
-    def semantic_search(self, query, embeddings, chunks, top_n=0):
+    @staticmethod
+    @function_tool
+    def semantic_search(query: str):
+        """Perform semantic search on the document chunks with the specified query."""
+        print(f"SYSTEM: Performing semantic search with query: {query}")
+        instance = explainer
+        if instance.semantic_search_num >= SEMANTIC_SEARCH_MAX:
+            return {"status": "error", "message": f"Maximum number of semantic searches ({SEMANTIC_SEARCH_MAX}) reached."}
         similarities = []
-        query_embedding = self.client.embeddings.create(
-            model=self.LLM_EMBEDDING_MODEL,
+        query_embedding = instance.client.embeddings.create(
+            model=EMBEDDING_MODEL,
             input=query,
             encoding_format="float"
         ).data[0].embedding
-        for embedding in embeddings:
+        for embedding in instance.embeddings:
             similarity = np.dot(query_embedding, embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(embedding))
             similarities.append(similarity)
-        top_indices = np.argsort(similarities)[::-1][:top_n]
-        top_chunks = [chunks[i] for i in top_indices]
-        return top_chunks
+        top_indices = np.argsort(similarities)[::-1][:instance.top_n]
+        top_chunks = [instance.chunks[i] for i in top_indices]
+        context = "\n\n".join(top_chunks)
+        instance.semantic_search_num += 1
+        if not context:
+            return {"status": "error", "message": "No relevant chunks found for the semantic search key."}
+        else:
+            return {"status": "success", "message": f"Semantic search completed successfully and {instance.top_n} chunks retrieved.", "data": context}
+        
+    @staticmethod
+    @function_tool
+    def request_increasing_top_n():
+        """Request to increase the number of chunks returned."""
+        print(f"SYSTEM: Requesting to increase the number of chunks.")
+        instance = explainer
+        instance.top_n += 5
+        if instance.top_n > TOP_N_MAX:
+            instance.top_n = TOP_N_MAX
+            return {"status": "error", "message": f"Maximum value of top_n {TOP_N_MAX} reached and cannot be increased further."}
+        return {"status": "success", "message": f"Maximum number of chunks returned increased to {instance.top_n}."}
+
+    @staticmethod
+    @function_tool
+    def record_unknown_question(question: str):
+        """Record an unknown question, if the relevant information is missing from the chunks."""
+        with open('unknown_questions.json', 'a', encoding='utf-8') as f:
+            json.dump({"question": question}, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+        return {"status": "success", "message": "Question recorded."}
+
+    @staticmethod
+    @function_tool
+    def record_suggestion(suggestion: str):
+        """Record a suggestion for improving the document or the search process."""
+        with open('suggestions.json', 'a', encoding='utf-8') as f:
+            json.dump({"suggestion": suggestion}, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+        return {"status": "success", "message": "Suggestion recorded."}
+
+    def define_search_agent(self):
+        system_prompt = (
+            f"You are a helpful document explainer assistant.\n"
+            f"Your task is to answer the user's questions based on the information recorded in the documents.\n"
+            f"You can use tools to access the documents. You are allowed to perform semantic searches on the documents, "
+            f"and you may perform multiple searches with different query contents. You are also allowed to increase "
+            f"the number of returned chunks when necessary.\n"
+            f"Always provide concise and accurate responses to the user's questions based on the documents.\n\n"
+            f"Use the following tools when appropriate:\n"
+            f"- record_unknown_question: Use this tool to record any question that cannot be answered from the chunks, "
+            f"even after you have performed several searches.\n"
+            f"- record_suggestion: Use this tool to record suggestions for enriching the system, such as adding more "
+            f"documents or improving the search functionality.\n"
+            f"- semantic_search: Use this tool to query the documents for further information. You can generate your own "
+            f"queries when needed. You may perform at most {SEMANTIC_SEARCH_MAX} searches per user request.\n"
+            f"- request_increasing_top_n: Use this tool to request a larger number of chunks returned from semantic search. "
+            f"You may request this multiple times, with each increase adding 5 chunks, capped at {TOP_N_MAX}.\n\n"
+            f"Guidelines:\n"
+            f"- Always provide a clear and concise answer.\n"
+            f"- Use tools only when necessary.\n"
+            f"- If the user's question is unclear or ambiguous, ask for clarification.\n"
+            f"- Always try to answer based on the information in the documents. For this reason, you are encouraged to "
+            f"perform at least one semantic search per user query.\n"
+            f"- If you cannot find the answer in the returned chunks, you are encouraged to use semantic_search or "
+            f"request_increasing_top_n before concluding, until the limits are reached or you believe no further relevant "
+            f"information can be found.\n"
+            f"- Do not add your own knowledge unless explicitly asked to, or if you believe the documents are lacking and "
+            f"your knowledge can meaningfully improve the answer. When you do so, make it clear to the user.\n"
+            f"- You may chat with the user without accessing the documents only if the user's message is not a question "
+            f"(e.g., a suggestion for the system, or a request to summarize the conversation history).\n\n"
+            f"Output Format:\n"
+            f"- Always return a JSON object that matches this schema:\n"
+            f"  {{\n"
+            f'    "is_require_cross_check": true or false,\n'
+            f'    "search_result": "<your answer text here>"\n'
+            f"  }}\n\n"
+            f"- If the user’s question involves factual claims (retrieval, summarization, knowledge-based), "
+            f"set is_require_cross_check = true.\n"
+            f"- If the user’s question is meta (e.g., summarizing conversation history, casual chat), "
+            f"set is_require_cross_check = false.\n"
+            f"- Put your full, clear, concise answer into search_result.\n"
+            f"- Do not output anything except the JSON object.\n"
+        )
+        self.search_agent = Agent(
+            name="Search agent",
+            instructions=system_prompt,
+            model=LLM_MODEL,
+            tools=[
+                self.record_unknown_question,
+                self.record_suggestion,
+                self.semantic_search,
+                self.request_increasing_top_n
+            ],
+            output_type=SearchAgentOutput,
+        )
+
+    @staticmethod
+    @function_tool
+    def serper_search(query: str):
+        """Perform a search using the Serper API."""
+        instance = explainer
+        if instance.serper_query_num >= SERPER_QUERY_MAX:
+            return {"status": "error", "message": f"Maximum number of Serper searches ({SERPER_QUERY_MAX}) reached."}
+        url = "https://google.serper.dev/search"
+        payload = json.dumps({
+        "q": query,
+        "num": 10
+        })
+        headers = {
+        'X-API-KEY': SERPER_API_KEY,
+        'Content-Type': 'application/json'
+        }
+        response = requests.request("POST", url, headers=headers, data=payload)
+        if response.status_code == 200:
+            instance.serper_query_num += 1
+            return response.json()
+        return {"error": "Search failed."}
+
+    def define_cross_check_agent(self):
+        system_prompt = (
+            f"You are a fact-checking assistant.\n"
+            f"You will receive the final text output of an upstream assistant whose job is to "
+            f"retrieve information from documents and summarize it for the user.\n\n"
+            f"Your task:\n"
+            f"- Review the answer for factual errors, misleading claims, outdated information, or statements "
+            f"that conflict with your own knowledge.\n"
+            f"- If you suspect a claim is wrong or outdated, you may perform web searches to verify.\n"
+            f"- You may perform multiple searches with different queries, but you are limited to {SERPER_QUERY_MAX} searches per user request.\n"
+            f"- Output your findings as bullet points. For each issue, write:\n"
+            f"  INCORRECT: <copied statement>\n"
+            f"  CORRECTED: <the corrected or updated information>\n"
+            f"- If you have a suspicion but cannot verify it with a single search, note it as:\n"
+            f"  UNVERIFIED SUSPICION: <statement> — <why it might be wrong>\n"
+            f"- If everything appears correct, output a single line: 'No factual errors found.', followed by bullet points of what you have confirmed via web search.\n\n"
+            f" CONFIRMED: <copied statement> - <the source of confirmation, and anything to amend>\n"
+            f"Guidelines:\n"
+            f"- Do not repeat or restate the full upstream answer.\n"
+            f"- Keep your output limited to bullet points.\n"
+            f"- Be concise and clear in your corrections.\n"
+        )
+        self.cross_check_agent = Agent(
+            name="Cross-check agent",
+            instructions=system_prompt,
+            model=LLM_MODEL,
+            tools=[self.serper_search],
+            model_settings=ModelSettings(
+                parallel_tool_calls=False
+            )
+        )
+
+    async def chat(self, query, history):
+        messages = history + [{"role": "user", "content": query}]
+        response = await Runner.run(self.search_agent, messages)
+        return response.final_output
+    
+    async def cross_check(self, query):
+        messages = [{"role": "user", "content": query}]
+        response = await Runner.run(self.cross_check_agent, messages)
+        return response.final_output
 
     def save_history(self, history):
         with open('history.json', 'w', encoding='utf-8') as f:
@@ -190,121 +314,35 @@ class DocumentExplainer:
             with open('history.json', 'r', encoding='utf-8') as f:
                 return json.load(f)
         return []
-    
-    def record_unknown_question(self, question):
-        with open('unknown_questions.json', 'a', encoding='utf-8') as f:
-            json.dump({"question": question}, f, ensure_ascii=False, indent=2)
-            f.write('\n')
-        return {"status": "success", "message": "Question recorded."}
-    
-    def record_suggestion(self, suggestion):
-        with open('suggestions.json', 'a', encoding='utf-8') as f:
-            json.dump({"suggestion": suggestion}, f, ensure_ascii=False, indent=2)
-            f.write('\n')
-        return {"status": "success", "message": "Suggestion recorded."}
-    
-    def request_more_info(self, is_more_results_required):
-        if is_more_results_required:
-            self.TOP_N += 5
-            if self.TOP_N > self.TOP_N_MAX:
-                self.TOP_N = self.TOP_N_MAX
-                return {"status": "error", "message": f"Cannot increase TOP_N beyond {self.TOP_N_MAX}."}
-        return {"status": "success", "message": f"Top N increased to {self.TOP_N}."}
-    
-    def request_semantic_search(self, semantic_search_key):
-        if not semantic_search_key:
-            return {"status": "error", "message": "Semantic search key is required."}
-        chunks, embeddings = self.load_chunks_embeddings()
-        if chunks is None or embeddings is None:
-            return {"status": "error", "message": "Failed to load document chunks or embeddings."}
-        context = self.semantic_search(semantic_search_key, embeddings, chunks, top_n=self.TOP_N)
-        context = "\n\n".join(context)
-        if not context:
-            return {"status": "error", "message": "No relevant chunks found for the semantic search key."}
-        else:
-            return {"status": "success", "message": "Semantic search completed successfully.", "data": context}
 
-    def handle_tool_call(self, tool_calls):
-        results = []
-        for tool_call in tool_calls:
-            tool_name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
-            print(f"AI is calling tool: {tool_name}", flush=True)
-            tool = getattr(self, tool_name, None)
-            result = tool(**arguments) if tool else {"status": "error", "message": f"Tool {tool_name} not found"}
-            results.append({"role": "tool", "content": json.dumps(result), "tool_call_id": tool_call.id})
-        return results
-    
-    def tools(self):
-        return [
-            {"type": "function", "function": record_unknown_question_json},
-            {"type": "function", "function": record_suggestion_json},
-            {"type": "function", "function": request_semantic_search_json},
-            {"type": "function", "function": request_more_info_json}
-        ]
-    
-    def system_prompt(self):
-        system_prompt = (
-            f"You are a document explainer system. You are asked to explain variety of documents that is saved in the user's system.\n"
-            f"Semantic search has been implemented prior to this request. The most relevant chunks relevant to the user's latest question have been identified. These chunks will be given to you shortly. The total number of chunks will also be given. \n"
-            f"Your task is to provide a concise and accurate explanation of the document based on the provided chunks and the user's questions. \n"
-            f"Use the following tools when necessary:\n"
-            f"- record_unknown_question: Use this tool to record any question that couldn't be answered from the chunks, even after you have requested the maximum number of chunks.\n"
-            f"- record_suggestion: Use this tool to record a suggestion for enriching the system, such as adding more documents or improving the search functionality.\n"
-            f"- request_semantic_search: Use this tool to request performing semantic search to the documents with a key sentence of your choice. Use this tool when you think you need to query something from the documents for further information.\n"
-            f"- request_more_info: Use this tool to request larger number of chunks returned from the semantic search. Notice that there is a limit on the number of {self.TOP_N_MAX} chunks that can be returned. Do not use this function to request more chunks if that limit is hit. Notice that in the beginning of each conversation, the chunk number is reset to {self.TOP_N_DEFAULT} upon the completion of a round of conversation.\n"
-            f"Remember to always provide a clear and concise explanation, and use the tools only when necessary.\n"
-            f"If you cannot find the answer in the chunks, let the user know honestly, especially if the user requires you to answer based on the chunks.\n"
-            f"If you cannot find the answer in the chunks, and you think you can answer based on your own knowledge, let the user know that you are answering based on your own knowledge.\n\n"
-        )
-        return system_prompt
-    
-    def chat(self, query, history):
-        chunks, embeddings = self.load_chunks_embeddings()
-        if chunks is None or embeddings is None:
-            chunks = self.chunk_documents()
-            embeddings = self.generate_embeddings(chunks)
-            self.save_chunks_embeddings(chunks, embeddings)
-        context = self.semantic_search(query, embeddings, chunks, top_n=self.TOP_N)
-        intro_prompt = self.system_prompt() + (
-            f"Below are information chunks extracted from various documents.\n"
-            f"Current number of chunks: {len(chunks)}.\n\n"
-        )
-        content_prompt = intro_prompt + "\n\n".join(context)
-        messages = (
-            [{"role": "system", "content": content_prompt}] + 
-            history +
-            [{"role": "user", "content": query}]
-        )
-        done = False
-        tools = self.tools()
-        while not done:
-            response = self.client.chat.completions.create(model=self.LLM_MODEL, messages=messages, tools=tools)
-            if response.choices[0].finish_reason == "tool_calls":
-                message = response.choices[0].message
-                tool_calls = message.tool_calls
-                results = self.handle_tool_call(tool_calls)
-                messages.append(message)
-                messages.extend(results)
-            else:
-                done = True
-        return response.choices[0].message.content
-    
     def main(self):
         history = self.load_history()
         while True:
             query = input("You: ")
             if query.lower() in ['exit', 'quit']:
                 break
-            response = self.chat(query, history)
-            self.TOP_N = self.TOP_N_DEFAULT
-            print(f"Bot: {response}")
+            self.semantic_search_num = 0
+            response = asyncio.run(self.chat(query, history))
+            self.top_n = TOP_N_DEFAULT
+            if response.is_require_cross_check:
+                print("SYSTEM: Cross-checking information...")
+                self.serper_query_num = 0
+                cross_check_response = asyncio.run(self.cross_check(response.search_result))
+                final_response = (
+                    f"Part 1 — Information Retrieval & Summary Agent's Answer:\n"
+                    f"{response.search_result}\n\n"
+                    f"Part 2 — Online Cross-Check Result:\n"
+                    f"{cross_check_response}"
+                )
+            else:
+                final_response = response.search_result
+            print(f"Bot: \n {final_response}")
             print("---")
             history.append({"role": "user", "content": query})
-            history.append({"role": "assistant", "content": response})
-        self.save_history(history)
+            history.append({"role": "assistant", "content": final_response})
+            self.save_history(history)
 
 if __name__ == "__main__":
-    explainer = DocumentExplainer()
-    explainer.main()
-    
+    with trace("Document Explainer"):
+        explainer = DocumentExplainerOnlineCheck()
+        explainer.main()
